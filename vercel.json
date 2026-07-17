@@ -1,0 +1,45 @@
+{
+  "headers": [
+    {
+      "source": "/(.*\\.wasm\\.br)",
+      "headers": [
+        { "key": "Content-Type", "value": "application/wasm" },
+        { "key": "Content-Encoding", "value": "br" }
+      ]
+    },
+    {
+      "source": "/(.*\\.js\\.br)",
+      "headers": [
+        { "key": "Content-Type", "value": "application/javascript" },
+        { "key": "Content-Encoding", "value": "br" }
+      ]
+    },
+    {
+      "source": "/(.*\\.data\\.br)",
+      "headers": [
+        { "key": "Content-Type", "value": "application/octet-stream" },
+        { "key": "Content-Encoding", "value": "br" }
+      ]
+    },
+    {
+      "source": "/ServerData/(.*\\.bundle)",
+      "headers": [
+        { "key": "Content-Type",     "value": "application/octet-stream" },
+        { "key": "Content-Encoding", "value": "identity" },
+        { "key": "Cache-Control",    "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/ServerData/(.*\\.json)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    },
+    {
+      "source": "/ServerData/(.*\\.hash)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=60" }
+      ]
+    }
+  ]
+}
