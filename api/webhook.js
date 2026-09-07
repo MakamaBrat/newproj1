@@ -58,36 +58,43 @@ export default async function handler(req, res) {
 
     const buttonText = "🔮 Start 🔮";
 
-    // Кнопка "Оплатить" — это обычная URL-кнопка, ведущая на ссылку
-    // инвойса. Кнопка с pay:true работает ТОЛЬКО в сообщении-инвойсе
-    // (sendInvoice), а не на произвольном фото/тексте, поэтому здесь
-    // генерируем t.me-ссылку через createInvoiceLink и вешаем её как
-    // обычный url-button — Telegram сам откроет окно оплаты по клику.
-    let payUrl = null;
-    try {
-      const invoiceRes = await fetch(
-        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/createInvoiceLink`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: "Индивидуальный расклад",
-            description: "Оплата за индивидуальный расклад Таро",
-            payload: "special_ritual",
-            currency: "XTR",
-            prices: [{ label: "Индивидуальный расклад", amount: 100 }]
-          })
+    // Кнопка "Донат" — это набор обычных URL-кнопок, ведущих на ссылки
+    // инвойсов с разными суммами. Кнопка с pay:true работает ТОЛЬКО в
+    // сообщении-инвойсе (sendInvoice), а не на произвольном фото/тексте,
+    // поэтому здесь генерируем t.me-ссылки через createInvoiceLink и
+    // вешаем их как обычные url-button — Telegram сам откроет окно
+    // оплаты по клику. Т.к. сумму в готовой ссылке поменять нельзя,
+    // создаём отдельную ссылку под каждый вариант доната.
+    const donationAmounts = [50, 100, 200];
+    const donationLinks = await Promise.all(
+      donationAmounts.map(async (amount) => {
+        try {
+          const invoiceRes = await fetch(
+            `https://api.telegram.org/bot${process.env.BOT_TOKEN}/createInvoiceLink`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title: "Индивидуальный расклад",
+                description: "Донат за индивидуальный расклад Таро",
+                payload: "special_ritual",
+                currency: "XTR",
+                prices: [{ label: "Индивидуальный расклад", amount }]
+              })
+            }
+          );
+          const invoiceData = await invoiceRes.json();
+          if (invoiceData.ok) {
+            return { amount, url: invoiceData.result.replace("telegram.me", "t.me") };
+          }
+          console.error("[webhook] createInvoiceLink failed:", invoiceData);
+          return { amount, url: null };
+        } catch (err) {
+          console.error("[webhook] createInvoiceLink error:", err);
+          return { amount, url: null };
         }
-      );
-      const invoiceData = await invoiceRes.json();
-      if (invoiceData.ok) {
-        payUrl = invoiceData.result.replace("telegram.me", "t.me");
-      } else {
-        console.error("[webhook] createInvoiceLink failed:", invoiceData);
-      }
-    } catch (err) {
-      console.error("[webhook] createInvoiceLink error:", err);
-    }
+      })
+    );
 
     const imagePath = join(process.cwd(), "api", "ShowCard.png");
     const imageBuffer = readFileSync(imagePath);
@@ -98,10 +105,13 @@ export default async function handler(req, res) {
       [{ text: "🙏 Попросить индивидуальный расклад", url: "https://t.me/taroxa_support_bot" }]
     ];
 
-    // Кнопку "Оплатить" добавляем только если удалось создать ссылку —
-    // иначе пользователь получит нерабочую кнопку.
-    if (payUrl) {
-      inlineKeyboard.push([{ text: "💳 Оплатить (100 ⭐)", url: payUrl }]);
+    // Кнопки доната добавляем только для тех сумм, для которых удалось
+    // создать ссылку — иначе пользователь получит нерабочую кнопку.
+    const donationRow = donationLinks
+      .filter((d) => d.url)
+      .map((d) => ({ text: `💖 Донат ${d.amount} ⭐`, url: d.url }));
+    if (donationRow.length > 0) {
+      inlineKeyboard.push(donationRow);
     }
 
     const formData = new FormData();
