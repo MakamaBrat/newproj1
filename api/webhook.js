@@ -58,61 +58,19 @@ export default async function handler(req, res) {
 
     const buttonText = "🔮 Start 🔮";
 
-    // Кнопка "Донат" — это набор обычных URL-кнопок, ведущих на ссылки
-    // инвойсов с разными суммами. Кнопка с pay:true работает ТОЛЬКО в
-    // сообщении-инвойсе (sendInvoice), а не на произвольном фото/тексте,
-    // поэтому здесь генерируем t.me-ссылки через createInvoiceLink и
-    // вешаем их как обычные url-button — Telegram сам откроет окно
-    // оплаты по клику. Т.к. сумму в готовой ссылке поменять нельзя,
-    // создаём отдельную ссылку под каждый вариант доната.
-    const donationAmounts = [50, 100, 200];
-    const donationLinks = await Promise.all(
-      donationAmounts.map(async (amount) => {
-        try {
-          const invoiceRes = await fetch(
-            `https://api.telegram.org/bot${process.env.BOT_TOKEN}/createInvoiceLink`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title: "Индивидуальный расклад",
-                description: "Донат за индивидуальный расклад Таро",
-                payload: "special_ritual",
-                currency: "XTR",
-                prices: [{ label: "Индивидуальный расклад", amount }]
-              })
-            }
-          );
-          const invoiceData = await invoiceRes.json();
-          if (invoiceData.ok) {
-            return { amount, url: invoiceData.result.replace("telegram.me", "t.me") };
-          }
-          console.error("[webhook] createInvoiceLink failed:", invoiceData);
-          return { amount, url: null };
-        } catch (err) {
-          console.error("[webhook] createInvoiceLink error:", err);
-          return { amount, url: null };
-        }
-      })
-    );
-
+    // Главное меню — всего 3 кнопки. "Донат" больше не тянет за собой
+    // сразу 3 запроса к createInvoiceLink на каждый /start: ссылки на
+    // оплату теперь создаются лениво, только когда пользователь реально
+    // нажал "Донат" (см. обработку callback_query ниже, data === "donate_menu").
     const imagePath = join(process.cwd(), "api", "ShowCard.png");
     const imageBuffer = readFileSync(imagePath);
     const imageBlob = new Blob([imageBuffer], { type: "image/png" });
 
     const inlineKeyboard = [
       [{ text: buttonText, url: "https://T.me/taroxabot/game" }],
-      [{ text: "🙏 Попросить индивидуальный расклад", url: "https://t.me/taroxa_support_bot" }]
+      [{ text: "🙏 Приватный расклад", url: "https://t.me/taroxa_support_bot" }],
+      [{ text: "💖 Донат", callback_data: "donate_menu" }]
     ];
-
-    // Кнопки доната добавляем только для тех сумм, для которых удалось
-    // создать ссылку — иначе пользователь получит нерабочую кнопку.
-    const donationRow = donationLinks
-      .filter((d) => d.url)
-      .map((d) => ({ text: `💖 Донат ${d.amount} ⭐`, url: d.url }));
-    if (donationRow.length > 0) {
-      inlineKeyboard.push(donationRow);
-    }
 
     const formData = new FormData();
     formData.append("chat_id", String(chatId));
@@ -125,6 +83,139 @@ export default async function handler(req, res) {
     await fetch(
       `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendPhoto`,
       { method: "POST", body: formData }
+    );
+
+    return res.status(200).json({ ok: true });
+  }
+
+  // ─── callback_query: нажатие инлайн-кнопок (например "Донат") ──
+  if (update.callback_query) {
+    const cq = update.callback_query;
+    const chatId = cq.message?.chat?.id;
+
+    if (cq.data === "donate_menu") {
+      // Сразу гасим "часики" на кнопке, чтобы Telegram не показывал
+      // пользователю таймаут, пока мы дожидаемся createInvoiceLink.
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/answerCallbackQuery`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ callback_query_id: cq.id })
+        }
+      );
+
+      // Ссылки на оплату создаются здесь, а не при каждом /start —
+      // это единственное место, где они реально нужны.
+      const donationAmounts = [50, 100, 200];
+      const donationLinks = await Promise.all(
+        donationAmounts.map(async (amount) => {
+          try {
+            const invoiceRes = await fetch(
+              `https://api.telegram.org/bot${process.env.BOT_TOKEN}/createInvoiceLink`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  title: "Индивидуальный расклад",
+                  description: "Донат за индивидуальный расклад Таро",
+                  payload: "special_ritual",
+                  currency: "XTR",
+                  prices: [{ label: "Индивидуальный расклад", amount }]
+                })
+              }
+            );
+            const invoiceData = await invoiceRes.json();
+            if (invoiceData.ok) {
+              return { amount, url: invoiceData.result.replace("telegram.me", "t.me") };
+            }
+            console.error("[webhook] createInvoiceLink failed:", invoiceData);
+            return { amount, url: null };
+          } catch (err) {
+            console.error("[webhook] createInvoiceLink error:", err);
+            return { amount, url: null };
+          }
+        })
+      );
+
+      const donationRows = donationLinks
+        .filter((d) => d.url)
+        .map((d) => [{ text: `${d.amount} ⭐`, url: d.url }]);
+
+      if (donationRows.length === 0) {
+        await fetch(
+          `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "Не удалось создать ссылку на оплату, попробуйте позже 🙏"
+            })
+          }
+        );
+        return res.status(200).json({ ok: true });
+      }
+
+      donationRows.push([{ text: "⬅️ Назад", callback_data: "back_to_main" }]);
+
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: "Выберите сумму доната:",
+            reply_markup: { inline_keyboard: donationRows }
+          })
+        }
+      );
+
+      return res.status(200).json({ ok: true });
+    }
+
+    if (cq.data === "back_to_main") {
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/answerCallbackQuery`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ callback_query_id: cq.id })
+        }
+      );
+
+      await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: "Главное меню:",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "🔮 Start 🔮", url: "https://T.me/taroxabot/game" }],
+                [{ text: "🙏 Приватный расклад", url: "https://t.me/taroxa_support_bot" }],
+                [{ text: "💖 Донат", callback_data: "donate_menu" }]
+              ]
+            }
+          })
+        }
+      );
+
+      return res.status(200).json({ ok: true });
+    }
+
+    // Неизвестный callback_data — просто гасим "часики", чтобы кнопка
+    // не висела в состоянии загрузки у пользователя.
+    await fetch(
+      `https://api.telegram.org/bot${process.env.BOT_TOKEN}/answerCallbackQuery`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callback_query_id: cq.id })
+      }
     );
 
     return res.status(200).json({ ok: true });
