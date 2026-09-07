@@ -30,36 +30,42 @@
       </div>
     </div>
     <script>
+      // Общая логика переключения fullscreen — вынесена в отдельную функцию,
+      // чтобы её можно было вызвать и по Escape, и автоматически на ПК.
+      function toggleTelegramFullscreen() {
+        if (window.Telegram && window.Telegram.WebApp) {
+          var tgw = window.Telegram.WebApp;
+          console.log("[fullscreen-toggle] tg.isFullscreen =", tgw.isFullscreen);
+          try {
+            if (tgw.isFullscreen) {
+              tgw.exitFullscreen();
+            } else {
+              tgw.requestFullscreen();
+            }
+          } catch (err) {
+            console.log("[fullscreen-toggle] wrapper call failed, trying postEvent", err);
+          }
+          // Fallback напрямую через postEvent, в обход telegram-web-app.js,
+          // на случай если версия клиента не поддерживает обёртку.
+          if (tgw.postEvent) {
+            try {
+              tgw.postEvent(tgw.isFullscreen ? "web_app_exit_fullscreen" : "web_app_request_fullscreen");
+            } catch (err) {
+              console.log("[fullscreen-toggle] postEvent failed", err);
+            }
+          }
+        } else {
+          console.log("[fullscreen-toggle] window.Telegram.WebApp not found");
+        }
+      }
+
       // Регистрируем обработчик Esc максимально рано (до загрузки Unity-скрипта),
       // на window, с capture:true — чтобы перехватить событие раньше, чем это
       // сделает сам Unity (он тоже вешает свои слушатели клавиатуры на window).
       window.addEventListener("keydown", function (e) {
         if (e.key === "Escape" || e.key === "Esc" || e.keyCode === 27) {
           console.log("[fullscreen-toggle] Escape pressed");
-          if (window.Telegram && window.Telegram.WebApp) {
-            var tgw = window.Telegram.WebApp;
-            console.log("[fullscreen-toggle] tg.isFullscreen =", tgw.isFullscreen);
-            try {
-              if (tgw.isFullscreen) {
-                tgw.exitFullscreen();
-              } else {
-                tgw.requestFullscreen();
-              }
-            } catch (err) {
-              console.log("[fullscreen-toggle] wrapper call failed, trying postEvent", err);
-            }
-            // Fallback напрямую через postEvent, в обход telegram-web-app.js,
-            // на случай если версия клиента не поддерживает обёртку.
-            if (tgw.postEvent) {
-              try {
-                tgw.postEvent(tgw.isFullscreen ? "web_app_exit_fullscreen" : "web_app_request_fullscreen");
-              } catch (err) {
-                console.log("[fullscreen-toggle] postEvent failed", err);
-              }
-            }
-          } else {
-            console.log("[fullscreen-toggle] window.Telegram.WebApp not found");
-          }
+          toggleTelegramFullscreen();
         }
       }, true);
 
@@ -68,9 +74,27 @@
         var tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
+
+        // На ПК (Telegram Desktop / macOS / Web-клиент) полноэкранный режим
+        // не нужен так же, как на телефоне — а после tg.requestFullscreen()
+        // ниже он всё равно окажется включённым. Поэтому на десктопе сразу
+        // после входа в fullscreen автоматически "нажимаем Escape" —
+        // т.е. вызываем тот же toggleTelegramFullscreen(), который его выключит.
+        // Значения tg.platform для мобильных: "android", "android_x", "ios".
+        // Всё остальное (tdesktop, macos, web, weba, webk и т.п.) считаем ПК.
+        var isMobilePlatform = tg.platform === "android" || tg.platform === "android_x" || tg.platform === "ios";
+
         if (tg.requestFullscreen) {
           try { tg.requestFullscreen(); } catch (e) {}
         }
+
+        if (!isMobilePlatform) {
+          console.log("[fullscreen-toggle] desktop platform detected (" + tg.platform + "), auto-toggling fullscreen off");
+          // Небольшая задержка, чтобы requestFullscreen выше успел применить
+          // isFullscreen = true до того, как мы его выключим.
+          setTimeout(toggleTelegramFullscreen, 100);
+        }
+
         // На случай, если Telegram присылает событие изменения viewport
         // (например, после сворачивания/разворачивания клавиатуры) —
         // держим приложение развернутым.
