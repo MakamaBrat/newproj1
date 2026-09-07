@@ -58,20 +58,58 @@ export default async function handler(req, res) {
 
     const buttonText = "🔮 Start 🔮";
 
+    // Кнопка "Оплатить" — это обычная URL-кнопка, ведущая на ссылку
+    // инвойса. Кнопка с pay:true работает ТОЛЬКО в сообщении-инвойсе
+    // (sendInvoice), а не на произвольном фото/тексте, поэтому здесь
+    // генерируем t.me-ссылку через createInvoiceLink и вешаем её как
+    // обычный url-button — Telegram сам откроет окно оплаты по клику.
+    let payUrl = null;
+    try {
+      const invoiceRes = await fetch(
+        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/createInvoiceLink`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: "Индивидуальный расклад",
+            description: "Оплата за индивидуальный расклад Таро",
+            payload: "special_ritual",
+            currency: "XTR",
+            prices: [{ label: "Индивидуальный расклад", amount: 100 }]
+          })
+        }
+      );
+      const invoiceData = await invoiceRes.json();
+      if (invoiceData.ok) {
+        payUrl = invoiceData.result.replace("telegram.me", "t.me");
+      } else {
+        console.error("[webhook] createInvoiceLink failed:", invoiceData);
+      }
+    } catch (err) {
+      console.error("[webhook] createInvoiceLink error:", err);
+    }
+
     const imagePath = join(process.cwd(), "api", "ShowCard.png");
     const imageBuffer = readFileSync(imagePath);
     const imageBlob = new Blob([imageBuffer], { type: "image/png" });
+
+    const inlineKeyboard = [
+      [{ text: buttonText, url: "https://T.me/taroxabot/game" }],
+      [{ text: "🙏 Попросить индивидуальный расклад", url: "https://t.me/taroxa_support_bot" }]
+    ];
+
+    // Кнопку "Оплатить" добавляем только если удалось создать ссылку —
+    // иначе пользователь получит нерабочую кнопку.
+    if (payUrl) {
+      inlineKeyboard.push([{ text: "💳 Оплатить (100 ⭐)", url: payUrl }]);
+    }
 
     const formData = new FormData();
     formData.append("chat_id", String(chatId));
     formData.append("photo", imageBlob, "ShowCard.png");
     formData.append(
       "reply_markup",
-      JSON.stringify({
-        inline_keyboard: [
-          [{ text: buttonText, url: "https://T.me/taroxabot/game" }]
-        ]
-      })
+      JSON.stringify({ inline_keyboard: inlineKeyboard })
     );
 
     await fetch(
